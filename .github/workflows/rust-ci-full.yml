@@ -531,11 +531,10 @@ jobs:
     defaults: &test_defaults
       run:
         working-directory: codex-rs
-    env:
-      <<: &test_archive_env
-        CARGO_INCREMENTAL: "0"
-        SCCACHE_CACHE_SIZE: 10G
-        TEST_PROFILE: dev
+    env: &test_archive_env
+      CARGO_INCREMENTAL: "0"
+      SCCACHE_CACHE_SIZE: 10G
+      TEST_PROFILE: dev
       TEST_RUNNER: macos-15-xlarge
       TEST_TARGET: aarch64-apple-darwin
       USE_SCCACHE: "true"
@@ -674,9 +673,8 @@ jobs:
     runs-on: macos-15-xlarge
     timeout-minutes: 45
     defaults: *test_defaults
-    env:
-      <<: &test_shard_env
-        TEST_SHARD_COUNT: "4"
+    env: &test_shard_env
+      TEST_SHARD_COUNT: "4"
       TEST_TARGET: aarch64-apple-darwin
       TEST_REMOTE_ENV: "false"
     strategy: &test_shard_strategy
