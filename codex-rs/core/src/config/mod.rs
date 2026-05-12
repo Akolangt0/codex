@@ -2804,7 +2804,15 @@ impl Config {
                 // when doing so would lose roots, network, or tmp settings.
                 None
             } else {
-                Some(ActivePermissionProfile::new(default_permissions))
+                let selected_profile_extends = cfg
+                    .permissions
+                    .as_ref()
+                    .and_then(|permissions| permissions.entries.get(default_permissions))
+                    .and_then(|profile| profile.extends.clone());
+                let mut active_permission_profile =
+                    ActivePermissionProfile::new(default_permissions);
+                active_permission_profile.extends = selected_profile_extends;
+                Some(active_permission_profile)
             };
             (
                 configured_network_proxy_config,
