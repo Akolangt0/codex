@@ -1042,6 +1042,7 @@ async fn network_proxy_feature_matrix_preserves_sandbox_network_semantics() -> s
                         "workspace".to_string(),
                         PermissionProfileToml {
                             description: None,
+                            extends: None,
                             workspace_roots: None,
                             filesystem: Some(FilesystemPermissionsToml {
                                 glob_scan_max_depth: None,
@@ -1194,6 +1195,7 @@ async fn network_proxy_feature_uses_profile_network_proxy_settings() -> std::io:
                     "workspace".to_string(),
                     PermissionProfileToml {
                         description: None,
+                        extends: None,
                         workspace_roots: None,
                         filesystem: Some(FilesystemPermissionsToml {
                             glob_scan_max_depth: None,
@@ -1298,6 +1300,7 @@ enabled = false
                     "workspace".to_string(),
                     PermissionProfileToml {
                         description: None,
+                        extends: None,
                         workspace_roots: None,
                         filesystem: Some(FilesystemPermissionsToml {
                             glob_scan_max_depth: None,
