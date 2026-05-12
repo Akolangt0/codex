@@ -179,6 +179,43 @@ dangerously_allow_all_unix_sockets = true
 }
 
 #[test]
+fn selected_network_from_tables_ignores_builtin_profile_without_permissions_table() {
+    let config: toml::Value = toml::from_str(
+        r#"
+default_permissions = ":workspace"
+"#,
+    )
+    .expect("built-in profile config should parse");
+
+    let network = selected_network_from_tables(
+        network_tables_from_toml(&config).expect("built-in profile config should deserialize"),
+    )
+    .expect("built-in profile selection should not require permissions tables");
+
+    assert_eq!(network, None);
+}
+
+#[test]
+fn selected_network_from_tables_rejects_unknown_builtin_profile_without_permissions_table() {
+    let config: toml::Value = toml::from_str(
+        r#"
+default_permissions = ":unknown"
+"#,
+    )
+    .expect("unknown built-in config should parse");
+
+    let err = selected_network_from_tables(
+        network_tables_from_toml(&config).expect("unknown built-in config should deserialize"),
+    )
+    .expect_err("unknown built-in profile should be rejected");
+
+    assert_eq!(
+        err.to_string(),
+        "default_permissions refers to unknown built-in profile `:unknown`"
+    );
+}
+
+#[test]
 fn selected_network_from_tables_resolves_permission_profile_inheritance() {
     let config: toml::Value = toml::from_str(
         r#"

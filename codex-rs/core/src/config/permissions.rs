@@ -337,7 +337,7 @@ fn compile_workspace_roots(
     })
 }
 
-fn reject_unknown_builtin_permission_profile(profile_name: &str) -> io::Result<()> {
+pub(crate) fn reject_unknown_builtin_permission_profile(profile_name: &str) -> io::Result<()> {
     if profile_name.starts_with(':') {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
