@@ -27,6 +27,14 @@ pub(crate) fn replace_config_value(key_path: impl Into<String>, value: JsonValue
     }
 }
 
+pub(crate) fn upsert_config_value(key_path: impl Into<String>, value: JsonValue) -> ConfigEdit {
+    ConfigEdit {
+        key_path: key_path.into(),
+        value,
+        merge_strategy: MergeStrategy::Upsert,
+    }
+}
+
 pub(crate) fn clear_config_value(key_path: impl Into<String>) -> ConfigEdit {
     replace_config_value(key_path, JsonValue::Null)
 }

@@ -1617,10 +1617,15 @@ impl App {
                 self.chat_widget.set_plan_mode_reasoning_effort(effort);
             }
             AppEvent::PersistFullAccessWarningAcknowledged => {
-                if let Err(err) = ConfigEditsBuilder::for_config(&self.config)
-                    .set_hide_full_access_warning(/*acknowledged*/ true)
-                    .apply()
-                    .await
+                if let Err(err) = crate::config_rpc::write_config_batch(
+                    app_server.request_handle(),
+                    vec![crate::config_rpc::replace_config_value(
+                        "notice.hide_full_access_warning",
+                        serde_json::json!(true),
+                    )],
+                    /*reload_user_config*/ true,
+                )
+                .await
                 {
                     tracing::error!(
                         error = %err,
@@ -1632,10 +1637,15 @@ impl App {
                 }
             }
             AppEvent::PersistWorldWritableWarningAcknowledged => {
-                if let Err(err) = ConfigEditsBuilder::for_config(&self.config)
-                    .set_hide_world_writable_warning(/*acknowledged*/ true)
-                    .apply()
-                    .await
+                if let Err(err) = crate::config_rpc::write_config_batch(
+                    app_server.request_handle(),
+                    vec![crate::config_rpc::replace_config_value(
+                        "notice.hide_world_writable_warning",
+                        serde_json::json!(true),
+                    )],
+                    /*reload_user_config*/ true,
+                )
+                .await
                 {
                     tracing::error!(
                         error = %err,
@@ -1647,10 +1657,15 @@ impl App {
                 }
             }
             AppEvent::PersistRateLimitSwitchPromptHidden => {
-                if let Err(err) = ConfigEditsBuilder::for_config(&self.config)
-                    .set_hide_rate_limit_model_nudge(/*acknowledged*/ true)
-                    .apply()
-                    .await
+                if let Err(err) = crate::config_rpc::write_config_batch(
+                    app_server.request_handle(),
+                    vec![crate::config_rpc::replace_config_value(
+                        "notice.hide_rate_limit_model_nudge",
+                        serde_json::json!(true),
+                    )],
+                    /*reload_user_config*/ true,
+                )
+                .await
                 {
                     tracing::error!(
                         error = %err,
@@ -1702,10 +1717,17 @@ impl App {
                 from_model,
                 to_model,
             } => {
-                if let Err(err) = ConfigEditsBuilder::for_config(&self.config)
-                    .record_model_migration_seen(from_model.as_str(), to_model.as_str())
-                    .apply()
-                    .await
+                let mut migration_update = serde_json::Map::new();
+                migration_update.insert(from_model, serde_json::json!(to_model));
+                if let Err(err) = crate::config_rpc::write_config_batch(
+                    app_server.request_handle(),
+                    vec![crate::config_rpc::upsert_config_value(
+                        "notice.model_migrations",
+                        serde_json::Value::Object(migration_update),
+                    )],
+                    /*reload_user_config*/ true,
+                )
+                .await
                 {
                     tracing::error!(
                         error = %err,

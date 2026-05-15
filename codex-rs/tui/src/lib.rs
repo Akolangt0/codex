@@ -41,8 +41,11 @@ use codex_config::CloudRequirementsLoader;
 use codex_config::ConfigLoadError;
 use codex_config::LoaderOverrides;
 use codex_config::format_config_error_with_source;
+use codex_config::loader::project_trust_key;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
+use codex_exec_server::LOCAL_FS;
+use codex_git_utils::resolve_root_git_project_for_trust;
 use codex_login::AuthConfig;
 use codex_login::default_client::originator;
 use codex_login::default_client::set_default_client_residency_requirement;
@@ -910,6 +913,7 @@ pub async fn run_main(
     )
     .await;
 
+    let mut oss_provider_to_persist = None;
     let model_provider_override = if cli.oss {
         let resolved = resolve_oss_provider(
             cli.oss_provider.as_deref(),
@@ -921,11 +925,14 @@ pub async fn run_main(
             Some(provider)
         } else {
             // No provider configured, prompt the user
-            let provider = oss_selection::select_oss_provider(&codex_home).await?;
+            let (provider, persist) = oss_selection::select_oss_provider().await?;
             if provider == "__CANCELLED__" {
                 return Err(std::io::Error::other(
                     "OSS provider selection was cancelled by user",
                 ));
+            }
+            if persist {
+                oss_provider_to_persist = Some(provider.clone());
             }
             Some(provider)
         }
@@ -1182,6 +1189,7 @@ pub async fn run_main(
         state_db,
         remote_endpoint,
         environment_manager,
+        oss_provider_to_persist,
     )
     .await
     .map_err(|err| std::io::Error::other(err.to_string()))
@@ -1204,6 +1212,7 @@ async fn run_ratatui_app(
     state_db: Option<StateDbHandle>,
     remote_endpoint: Option<RemoteAppServerEndpoint>,
     environment_manager: Arc<EnvironmentManager>,
+    oss_provider_to_persist: Option<String>,
 ) -> color_eyre::Result<AppExitInfo> {
     let remote_mode = matches!(&app_server_target, AppServerTarget::Remote { .. });
     color_eyre::install()?;
@@ -1274,6 +1283,23 @@ async fn run_ratatui_app(
     }
     .with_remote_cwd_override(remote_cwd_override.clone());
     let mut app_server = Some(app_server_session);
+    if let Some(provider) = oss_provider_to_persist {
+        let Some(app_server) = app_server.as_ref() else {
+            unreachable!("app server should exist before OSS provider persistence");
+        };
+        if let Err(err) = crate::config_rpc::write_config_batch(
+            app_server.request_handle(),
+            vec![crate::config_rpc::replace_config_value(
+                "oss_provider",
+                serde_json::json!(provider),
+            )],
+            /*reload_user_config*/ true,
+        )
+        .await
+        {
+            tracing::warn!(error = %err, "failed to persist OSS provider preference");
+        }
+    }
 
     let should_show_trust_screen_flag = !remote_mode && should_show_trust_screen(&initial_config);
     let mut trust_decision_was_made = false;
@@ -1320,6 +1346,40 @@ async fn run_ratatui_app(
                 update_action: None,
                 exit_reason: ExitReason::UserRequested,
             });
+        }
+        if matches!(
+            onboarding_result.directory_trust_decision,
+            Some(crate::onboarding::TrustDirectorySelection::Trust)
+        ) {
+            let trust_target =
+                resolve_root_git_project_for_trust(LOCAL_FS.as_ref(), &initial_config.cwd)
+                    .await
+                    .map(Into::into)
+                    .unwrap_or_else(|| initial_config.cwd.to_path_buf());
+            let mut project_update = serde_json::Map::new();
+            project_update.insert(
+                project_trust_key(trust_target.as_path()),
+                serde_json::json!({ "trust_level": "trusted" }),
+            );
+            let Some(app_server) = app_server.as_ref() else {
+                unreachable!("app server should exist while onboarding is active");
+            };
+            if let Err(err) = crate::config_rpc::write_config_batch(
+                app_server.request_handle(),
+                vec![crate::config_rpc::upsert_config_value(
+                    "projects",
+                    serde_json::Value::Object(project_update),
+                )],
+                /*reload_user_config*/ true,
+            )
+            .await
+            {
+                tracing::warn!(
+                    error = %err,
+                    project = %trust_target.display(),
+                    "failed to persist trusted project state through app server"
+                );
+            }
         }
         trust_decision_was_made = onboarding_result.directory_trust_decision.is_some();
         // If this onboarding run included the login step, always refresh cloud requirements and
