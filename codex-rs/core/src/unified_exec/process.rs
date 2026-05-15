@@ -271,8 +271,7 @@ impl UnifiedExecProcess {
             ..Default::default()
         };
         if is_filesystem_sandbox_violation(sandbox_type, &exec_output) {
-            if let Some(violation) =
-                record_filesystem_sandbox_violation(sandbox_type, &exec_output)
+            if let Some(violation) = record_filesystem_sandbox_violation(sandbox_type, &exec_output)
             {
                 crate::security_events::record_sandbox_violation_audit(
                     self.sandbox_violation_context.as_ref(),
