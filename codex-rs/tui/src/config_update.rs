@@ -34,6 +34,7 @@ pub(crate) fn clear_config_value(key_path: impl Into<String>) -> ConfigEdit {
 
 pub(crate) fn profile_scoped_key_path(profile: Option<&str>, key_path: &str) -> String {
     if let Some(profile) = profile {
+        let profile = serde_json::to_string(profile).expect("profile names serialize as JSON");
         format!("profiles.{profile}.{key_path}")
     } else {
         key_path.to_string()
@@ -185,4 +186,18 @@ pub(crate) async fn write_skill_enabled(
         })
         .await
         .wrap_err("skills/config/write failed in TUI")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn profile_scoped_key_path_quotes_dotted_profile_names() {
+        assert_eq!(
+            profile_scoped_key_path(Some("team.prod"), "model"),
+            "profiles.\"team.prod\".model"
+        );
+    }
 }
