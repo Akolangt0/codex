@@ -86,8 +86,10 @@ impl App {
         if let Err(err) = config
             .permissions
             .set_permission_profile_from_session_snapshot(
-                permission_profile.clone(),
-                active_permission_profile.clone(),
+                PermissionProfileSnapshot::from_session_snapshot(
+                    permission_profile.clone(),
+                    active_permission_profile.clone(),
+                ),
             )
         {
             tracing::warn!(
@@ -212,8 +214,10 @@ impl App {
             match config
                 .permissions
                 .set_permission_profile_from_session_snapshot(
-                    profile_override.permission_profile.clone(),
-                    profile_override.active_permission_profile.clone(),
+                    PermissionProfileSnapshot::from_session_snapshot(
+                        profile_override.permission_profile.clone(),
+                        profile_override.active_permission_profile.clone(),
+                    ),
                 ) {
                 Ok(()) => {
                     config.permissions.network = profile_override.network.clone();

@@ -36,7 +36,12 @@ impl ChatWidget {
     ) -> ConstraintResult<()> {
         self.config
             .permissions
-            .set_permission_profile_from_session_snapshot(profile, active_permission_profile)
+            .set_permission_profile_from_session_snapshot(
+                PermissionProfileSnapshot::from_session_snapshot(
+                    profile,
+                    active_permission_profile,
+                ),
+            )
     }
 
     pub(crate) fn set_permission_network(
