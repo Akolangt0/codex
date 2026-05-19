@@ -1094,6 +1094,7 @@ impl Session {
                 }],
                 final_output_json_schema: None,
                 responsesapi_client_metadata: None,
+                thread_settings: Default::default(),
             },
             /*mirror_user_text_to_realtime*/ None,
         )
@@ -3017,16 +3018,6 @@ impl Session {
     {
         let mut state = self.state.lock().await;
         state.record_mcp_dependency_prompted(names);
-    }
-
-    pub async fn dependency_env(&self) -> HashMap<String, String> {
-        let state = self.state.lock().await;
-        state.dependency_env()
-    }
-
-    pub async fn set_dependency_env(&self, values: HashMap<String, String>) {
-        let mut state = self.state.lock().await;
-        state.set_dependency_env(values);
     }
 
     pub(crate) async fn set_server_reasoning_included(&self, included: bool) {

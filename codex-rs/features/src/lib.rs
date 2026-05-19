@@ -132,7 +132,7 @@ pub enum Feature {
     EnableMcpApps,
     /// Use the new path for the host-owned apps MCP server.
     AppsMcpPathOverride,
-    /// Enable the tool_search tool for apps.
+    /// Removed compatibility flag retained as a no-op now that tool_search is always enabled.
     ToolSearch,
     /// Always defer MCP tools behind tool_search instead of exposing small sets directly.
     ToolSearchAlwaysDeferMcpTools,
@@ -168,7 +168,7 @@ pub enum Feature {
     ImageGeneration,
     /// Allow prompting and installing missing MCP dependencies.
     SkillMcpDependencyInstall,
-    /// Prompt for missing skill env var dependencies.
+    /// Removed compatibility flag for deleted skill env var dependency prompting.
     SkillEnvVarDependencyPrompt,
     /// Allow request_user_input in Default collaboration mode.
     DefaultModeRequestUserInput,
@@ -432,7 +432,13 @@ impl Features {
                 "apply_patch_freeform" => {
                     continue;
                 }
+                "tool_search" => {
+                    continue;
+                }
                 "image_detail_original" => {
+                    continue;
+                }
+                "skill_env_var_dependency_prompt" => {
                     continue;
                 }
                 "use_legacy_landlock" => {
@@ -947,8 +953,8 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::ToolSearch,
         key: "tool_search",
-        stage: Stage::Stable,
-        default_enabled: true,
+        stage: Stage::Removed,
+        default_enabled: false,
     },
     FeatureSpec {
         id: Feature::ToolSearchAlwaysDeferMcpTools,
@@ -1041,7 +1047,7 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::SkillEnvVarDependencyPrompt,
         key: "skill_env_var_dependency_prompt",
-        stage: Stage::UnderDevelopment,
+        stage: Stage::Removed,
         default_enabled: false,
     },
     FeatureSpec {
