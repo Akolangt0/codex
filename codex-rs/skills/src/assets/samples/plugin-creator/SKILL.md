@@ -1,6 +1,6 @@
 ---
 name: plugin-creator
-description: Create and scaffold plugin directories for Codex with a required `.codex-plugin/plugin.json`, optional plugin folders/files, valid manifest defaults, and personal-marketplace entries by default. Use when Codex needs to create a new personal plugin, add optional plugin structure, or generate or update marketplace entries for plugin ordering and availability metadata.
+description: Create and scaffold plugin directories for Codex with a required `.codex-plugin/plugin.json`, optional plugin folders/files, valid manifest defaults, and personal-marketplace entries by default. Use when Codex needs to create a new personal plugin, add optional plugin structure, generate or update marketplace entries for plugin ordering and availability metadata, or update an existing local plugin during development with the CLI-driven cachebuster and reinstall flow.
 ---
 
 # Plugin Creator
@@ -52,6 +52,15 @@ python3 .agents/skills/plugin-creator/scripts/create_basic_plugin.py my-plugin \
 ```bash
 python3 .agents/skills/plugin-creator/scripts/validate_plugin.py <plugin-path>
 ```
+
+For updates to an existing local plugin during development, keep the scaffold flow as-is and use the CLI-driven reference instead of hand-editing marketplace files:
+
+```bash
+python3 .agents/skills/plugin-creator/scripts/update_plugin_cachebuster.py <plugin-path>
+```
+
+Prefer the helper default cachebuster unless the user explicitly asks for a specific override.
+See `references/installing-and-updating.md` for the expected cachebuster and reinstall flow while iterating on an existing local plugin.
 
 ## What this skill creates
 
@@ -157,6 +166,9 @@ python3 .agents/skills/plugin-creator/scripts/validate_plugin.py <plugin-path>
 - When generating marketplace entries, always write `policy.installation`, `policy.authentication`, and `category` even if their values are defaults.
 - Add `policy.products` only when the user explicitly asks for that override.
 - Keep marketplace `source.path` relative to the selected marketplace root as `./plugins/<plugin-name>`.
+- For updates to an existing local plugin during development, do not hand-edit marketplace config
+  or `marketplace.json`. Use the Codex CLI flow documented in
+  `references/installing-and-updating.md` and `scripts/update_plugin_cachebuster.py`.
 - When the workflow created or updated a marketplace-backed plugin, end the final user-facing
   response with a short Codex app handoff. Say `To view this in the Codex app:` and write
   `View <normalized plugin name>` and `Share <normalized plugin name>` as Markdown links, not raw
@@ -175,6 +187,8 @@ python3 .agents/skills/plugin-creator/scripts/validate_plugin.py <plugin-path>
 For the exact canonical sample JSON for both plugin manifests and marketplace entries, use:
 
 - `references/plugin-json-spec.md`
+- `references/installing-and-updating.md` for CLI-driven update/reinstall guidance while
+  iterating on an existing local plugin, plus the new-thread pickup behavior after reinstall
 
 ## Validation
 
