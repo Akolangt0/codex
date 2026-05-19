@@ -2907,11 +2907,8 @@ mod tests {
                 limit: None,
                 sort_key: None,
                 sort_direction: None,
-                model_providers: None,
                 source_kinds: None,
                 archived: None,
-                cwd: None,
-                use_state_db_only: false,
                 search_term: "needle".to_string(),
             },
         };
