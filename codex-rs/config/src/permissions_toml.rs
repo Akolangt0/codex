@@ -26,18 +26,21 @@ impl PermissionsToml {
         &self,
         profile_name: &str,
         mut parent_profile: F,
-    ) -> Result<PermissionProfileToml, PermissionProfileResolutionError>
+    ) -> Result<ResolvedPermissionProfileToml, PermissionProfileResolutionError>
     where
         F: FnMut(&str) -> Option<PermissionProfileToml>,
     {
-        let mut stack = Vec::new();
-        let mut resolved_profile = None;
+        let mut profile_names = Vec::new();
+        let mut profiles = Vec::new();
         let mut next_profile_name = profile_name.to_string();
         let mut referenced_by: Option<String> = None;
 
         loop {
-            if let Some(cycle_start) = stack.iter().position(|name| name == &next_profile_name) {
-                let cycle = stack[cycle_start..]
+            if let Some(cycle_start) = profile_names
+                .iter()
+                .position(|name| name == &next_profile_name)
+            {
+                let cycle = profile_names[cycle_start..]
                     .iter()
                     .cloned()
                     .chain(std::iter::once(next_profile_name))
@@ -61,21 +64,24 @@ impl PermissionsToml {
                         },
                     )
                 })?;
+            let parent_profile_name = profile.extends.clone();
 
-            if let Some(parent_profile_name) = profile.extends.clone() {
-                stack.push(next_profile_name.clone());
-                resolved_profile = Some(match resolved_profile {
-                    Some(child) => merge_permission_profiles(profile, child),
-                    None => profile,
-                });
+            profile_names.push(next_profile_name.clone());
+
+            if let Some(parent_profile_name) = parent_profile_name {
+                profiles.push(profile);
                 referenced_by = Some(next_profile_name);
                 next_profile_name = parent_profile_name;
                 continue;
             }
 
-            return Ok(match resolved_profile {
-                Some(child) => merge_permission_profiles(profile, child),
-                None => profile,
+            let profile = profiles
+                .into_iter()
+                .rev()
+                .fold(profile, merge_permission_profiles);
+            return Ok(ResolvedPermissionProfileToml {
+                profile,
+                inherited_profile_names: profile_names.into_iter().skip(1).collect(),
             });
         }
     }
@@ -89,6 +95,12 @@ pub struct PermissionProfileToml {
     pub workspace_roots: Option<WorkspaceRootsToml>,
     pub filesystem: Option<FilesystemPermissionsToml>,
     pub network: Option<NetworkToml>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedPermissionProfileToml {
+    pub profile: PermissionProfileToml,
+    pub inherited_profile_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

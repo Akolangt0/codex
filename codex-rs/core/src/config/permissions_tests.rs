@@ -248,6 +248,7 @@ fn permissions_profiles_resolve_extends_parent_first_with_child_overrides() {
                 "base".to_string(),
                 PermissionProfileToml {
                     extends: None,
+                    workspace_roots: None,
                     filesystem: Some(FilesystemPermissionsToml {
                         glob_scan_max_depth: Some(1),
                         entries: BTreeMap::from([
@@ -296,6 +297,7 @@ fn permissions_profiles_resolve_extends_parent_first_with_child_overrides() {
                 "child".to_string(),
                 PermissionProfileToml {
                     extends: Some("base".to_string()),
+                    workspace_roots: None,
                     filesystem: Some(FilesystemPermissionsToml {
                         glob_scan_max_depth: Some(3),
                         entries: BTreeMap::from([
@@ -345,9 +347,10 @@ fn permissions_profiles_resolve_extends_parent_first_with_child_overrides() {
         .expect("child profile should resolve");
 
     assert_eq!(
-        resolved,
+        resolved.profile,
         PermissionProfileToml {
             extends: Some("base".to_string()),
+            workspace_roots: None,
             filesystem: Some(FilesystemPermissionsToml {
                 glob_scan_max_depth: Some(3),
                 entries: BTreeMap::from([
@@ -404,6 +407,7 @@ fn permissions_profiles_resolve_extends_parent_first_with_child_overrides() {
             }),
         }
     );
+    assert_eq!(resolved.inherited_profile_names, vec!["base".to_string()]);
 }
 
 #[test]
@@ -507,6 +511,7 @@ fn compile_permission_profile_workspace_roots_resolves_enabled_entries() -> std:
                 "workspace".to_string(),
                 PermissionProfileToml {
                     description: None,
+                    extends: None,
                     workspace_roots: Some(WorkspaceRootsToml {
                         entries: BTreeMap::from([
                             ("backend".to_string(), true),

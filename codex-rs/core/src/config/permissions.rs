@@ -13,6 +13,7 @@ use codex_config::permissions_toml::NetworkUnixSocketPermissionToml;
 use codex_config::permissions_toml::NetworkUnixSocketPermissionsToml;
 use codex_config::permissions_toml::PermissionProfileToml;
 use codex_config::permissions_toml::PermissionsToml;
+use codex_config::permissions_toml::ResolvedPermissionProfileToml;
 use codex_config::permissions_toml::WorkspaceRootsToml;
 use codex_config::types::SandboxWorkspaceWrite;
 use codex_features::NetworkProxyConfigToml;
@@ -192,7 +193,7 @@ pub(crate) fn apply_network_proxy_feature_config(
 pub(crate) fn resolve_permission_profile(
     permissions: &PermissionsToml,
     profile_name: &str,
-) -> io::Result<PermissionProfileToml> {
+) -> io::Result<ResolvedPermissionProfileToml> {
     permissions
         .resolve_profile(profile_name, builtin_parent_permission_profile)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err.to_string()))
@@ -217,7 +218,7 @@ pub(crate) fn network_proxy_config_for_profile_selection(
             "default_permissions requires a `[permissions]` table",
         )
     })?;
-    let profile = resolve_permission_profile(permissions, profile_name)?;
+    let profile = resolve_permission_profile(permissions, profile_name)?.profile;
     Ok(network_proxy_config_from_profile_network(
         profile.network.as_ref(),
     ))
@@ -229,8 +230,13 @@ pub(crate) fn compile_permission_profile(
     policy_cwd: &Path,
     startup_warnings: &mut Vec<String>,
 ) -> io::Result<(FileSystemSandboxPolicy, NetworkSandboxPolicy)> {
-    let profile = resolve_permission_profile(permissions, profile_name)?;
-    let base_permissions = profile_extends_builtin_workspace(permissions, profile_name)
+    let ResolvedPermissionProfileToml {
+        profile,
+        inherited_profile_names,
+    } = resolve_permission_profile(permissions, profile_name)?;
+    let base_permissions = inherited_profile_names
+        .iter()
+        .any(|name| name == BUILT_IN_WORKSPACE_PROFILE)
         .then(|| PermissionProfile::workspace_write().to_runtime_permissions());
     compile_resolved_permission_profile(
         profile,
@@ -239,20 +245,6 @@ pub(crate) fn compile_permission_profile(
         startup_warnings,
         base_permissions,
     )
-}
-
-fn profile_extends_builtin_workspace(permissions: &PermissionsToml, profile_name: &str) -> bool {
-    let mut profile_name = profile_name;
-    while let Some(profile) = permissions.entries.get(profile_name) {
-        let Some(parent_profile_name) = profile.extends.as_deref() else {
-            return false;
-        };
-        if parent_profile_name == BUILT_IN_WORKSPACE_PROFILE {
-            return true;
-        }
-        profile_name = parent_profile_name;
-    }
-    false
 }
 
 fn compile_resolved_permission_profile(
@@ -364,7 +356,7 @@ pub(crate) fn compile_permission_profile_workspace_roots(
     })?;
     let profile = resolve_permission_profile(permissions, profile_name)?;
     Ok(compile_workspace_roots(
-        profile.workspace_roots.as_ref(),
+        profile.profile.workspace_roots.as_ref(),
         policy_cwd,
     ))
 }

@@ -1511,6 +1511,7 @@ async fn default_permissions_extended_profile_preserves_parent_metadata() -> std
                         "base".to_string(),
                         PermissionProfileToml {
                             extends: None,
+                            workspace_roots: None,
                             filesystem: Some(FilesystemPermissionsToml {
                                 glob_scan_max_depth: None,
                                 entries: BTreeMap::from([(
@@ -1525,6 +1526,7 @@ async fn default_permissions_extended_profile_preserves_parent_metadata() -> std
                         "workspace".to_string(),
                         PermissionProfileToml {
                             extends: Some("base".to_string()),
+                            workspace_roots: None,
                             filesystem: None,
                             network: None,
                         },
@@ -1546,7 +1548,6 @@ async fn default_permissions_extended_profile_preserves_parent_metadata() -> std
         Some(ActivePermissionProfile {
             id: "workspace".to_string(),
             extends: Some("base".to_string()),
-            modifications: Vec::new(),
         })
     );
     Ok(())
@@ -2034,6 +2035,7 @@ async fn workspace_profile_applies_rules_to_runtime_and_profile_workspace_roots(
                     "dev".to_string(),
                     PermissionProfileToml {
                         description: None,
+                        extends: None,
                         workspace_roots: Some(WorkspaceRootsToml {
                             entries: BTreeMap::from([(
                                 profile_root.to_string_lossy().into_owned(),
@@ -2167,6 +2169,7 @@ async fn default_permissions_profile_can_extend_builtin_workspace() -> std::io::
                     "workspace-with-network".to_string(),
                     PermissionProfileToml {
                         extends: Some(":workspace".to_string()),
+                        workspace_roots: None,
                         filesystem: None,
                         network: Some(NetworkToml {
                             enabled: Some(true),
@@ -2203,7 +2206,6 @@ async fn default_permissions_profile_can_extend_builtin_workspace() -> std::io::
         Some(ActivePermissionProfile {
             id: "workspace-with-network".to_string(),
             extends: Some(":workspace".to_string()),
-            modifications: Vec::new(),
         })
     );
     Ok(())
