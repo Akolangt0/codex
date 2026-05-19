@@ -453,7 +453,7 @@ async fn assert_remote_manual_compact_request_parity(
     let harness = TestCodexHarness::with_builder(builder).await?;
     let codex = harness.test().codex.clone();
     let image_url =
-        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
             .to_string();
 
     let responses_mock = responses::mount_sse_sequence(

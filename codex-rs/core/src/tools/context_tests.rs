@@ -180,13 +180,14 @@ fn mcp_tool_output_response_item_truncates_large_structured_content() {
 
 #[test]
 fn mcp_tool_output_response_item_preserves_content_items() {
-    let image_url = "data:image/png;base64,AAA";
+    let image_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+    let image_url = format!("data:image/png;base64,{image_data}");
     let output = McpToolOutput {
         result: CallToolResult {
             content: vec![serde_json::json!({
                 "type": "image",
                 "mimeType": "image/png",
-                "data": "AAA",
+                "data": image_data,
             })],
             structured_content: None,
             is_error: Some(false),
@@ -215,7 +216,7 @@ fn mcp_tool_output_response_item_preserves_content_items() {
                             text: "Wall time: 0.5000 seconds\nOutput:".to_string(),
                         },
                         FunctionCallOutputContentItem::InputImage {
-                            image_url: image_url.to_string(),
+                            image_url,
                             detail: Some(DEFAULT_IMAGE_DETAIL),
                         },
                     ]

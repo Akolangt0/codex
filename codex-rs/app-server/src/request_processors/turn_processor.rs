@@ -326,6 +326,21 @@ impl TurnRequestProcessor {
         Ok(())
     }
 
+    fn invalid_image_input_error() -> JSONRPCErrorError {
+        invalid_params("Image input URL must be a non-empty URL or valid inline image data URL.")
+    }
+
+    fn validate_v2_image_input(items: &[V2UserInput]) -> Result<(), JSONRPCErrorError> {
+        for item in items {
+            if let V2UserInput::Image { url, .. } = item
+                && validate_prompt_image_url(url).is_err()
+            {
+                return Err(Self::invalid_image_input_error());
+            }
+        }
+        Ok(())
+    }
+
     async fn turn_start_inner(
         &self,
         request_id: ConnectionRequestId,
@@ -339,6 +354,10 @@ impl TurnRequestProcessor {
                 &error,
                 Some(AnalyticsJsonRpcError::Input(InputError::TooLarge)),
             );
+            return Err(error);
+        }
+        if let Err(error) = Self::validate_v2_image_input(&params.input) {
+            self.track_error_response(&request_id, &error, /*error_type*/ None);
             return Err(error);
         }
         let (thread_id, thread) =
@@ -636,6 +655,10 @@ impl TurnRequestProcessor {
                 &error,
                 Some(AnalyticsJsonRpcError::Input(InputError::TooLarge)),
             );
+            return Err(error);
+        }
+        if let Err(error) = Self::validate_v2_image_input(&params.input) {
+            self.track_error_response(request_id, &error, /*error_type*/ None);
             return Err(error);
         }
 

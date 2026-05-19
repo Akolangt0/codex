@@ -5,6 +5,7 @@ use std::path::Path;
 
 use codex_utils_image::PromptImageMode;
 use codex_utils_image::load_for_prompt_bytes;
+pub use codex_utils_image::validate_prompt_image_url;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -1231,18 +1232,24 @@ impl From<Vec<UserInput>> for ResponseInputItem {
                     UserInput::Image { image_url, detail } => {
                         image_index += 1;
                         let detail = detail.unwrap_or(DEFAULT_IMAGE_DETAIL);
-                        vec![
-                            ContentItem::InputText {
-                                text: image_open_tag_text(),
-                            },
-                            ContentItem::InputImage {
-                                image_url,
-                                detail: Some(detail),
-                            },
-                            ContentItem::InputText {
-                                text: image_close_tag_text(),
-                            },
-                        ]
+                        if validate_prompt_image_url(&image_url).is_ok() {
+                            vec![
+                                ContentItem::InputText {
+                                    text: image_open_tag_text(),
+                                },
+                                ContentItem::InputImage {
+                                    image_url,
+                                    detail: Some(detail),
+                                },
+                                ContentItem::InputText {
+                                    text: image_close_tag_text(),
+                                },
+                            ]
+                        } else {
+                            vec![ContentItem::InputText {
+                                text: "Invalid image".to_string(),
+                            }]
+                        }
                     }
                     UserInput::LocalImage { path, detail } => {
                         image_index += 1;
@@ -1357,9 +1364,15 @@ impl From<crate::dynamic_tools::DynamicToolCallOutputContentItem>
                 Self::InputText { text }
             }
             crate::dynamic_tools::DynamicToolCallOutputContentItem::InputImage { image_url } => {
-                Self::InputImage {
-                    image_url,
-                    detail: Some(DEFAULT_IMAGE_DETAIL),
+                if validate_prompt_image_url(&image_url).is_ok() {
+                    Self::InputImage {
+                        image_url,
+                        detail: Some(DEFAULT_IMAGE_DETAIL),
+                    }
+                } else {
+                    Self::InputText {
+                        text: "Invalid image".to_string(),
+                    }
                 }
             }
         }
@@ -1588,19 +1601,25 @@ fn convert_mcp_content_to_items(
                     let mime_type = mime_type.unwrap_or_else(|| "application/octet-stream".into());
                     format!("data:{mime_type};base64,{data}")
                 };
-                FunctionCallOutputContentItem::InputImage {
-                    image_url,
-                    detail: meta
-                        .as_ref()
-                        .and_then(serde_json::Value::as_object)
-                        .and_then(|meta| meta.get(CODEX_IMAGE_DETAIL_META_KEY))
-                        .and_then(serde_json::Value::as_str)
-                        .and_then(|detail| match detail {
-                            "high" => Some(ImageDetail::High),
-                            "original" => Some(ImageDetail::Original),
-                            _ => None,
-                        })
-                        .or(Some(DEFAULT_IMAGE_DETAIL)),
+                if validate_prompt_image_url(&image_url).is_ok() {
+                    FunctionCallOutputContentItem::InputImage {
+                        image_url,
+                        detail: meta
+                            .as_ref()
+                            .and_then(serde_json::Value::as_object)
+                            .and_then(|meta| meta.get(CODEX_IMAGE_DETAIL_META_KEY))
+                            .and_then(serde_json::Value::as_str)
+                            .and_then(|detail| match detail {
+                                "high" => Some(ImageDetail::High),
+                                "original" => Some(ImageDetail::Original),
+                                _ => None,
+                            })
+                            .or(Some(DEFAULT_IMAGE_DETAIL)),
+                    }
+                } else {
+                    FunctionCallOutputContentItem::InputText {
+                        text: "Invalid image".to_string(),
+                    }
                 }
             }
             Ok(McpContent::Unknown) | Err(_) => FunctionCallOutputContentItem::InputText {
@@ -1647,6 +1666,8 @@ mod tests {
         0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 11, 73, 68, 65, 84, 120, 156, 99, 96, 0, 2, 0, 0, 5, 0,
         1, 122, 94, 171, 63, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
     ];
+    const TINY_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+    const TINY_PNG_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
 
     #[test]
     fn response_input_message_conversion_preserves_phase() {
@@ -1710,7 +1731,7 @@ mod tests {
     fn convert_mcp_content_to_items_preserves_data_urls() {
         let contents = vec![serde_json::json!({
             "type": "image",
-            "data": "data:image/png;base64,Zm9v",
+            "data": TINY_PNG_DATA_URL,
             "mimeType": "image/png",
         })];
 
@@ -1718,7 +1739,7 @@ mod tests {
         assert_eq!(
             items,
             vec![FunctionCallOutputContentItem::InputImage {
-                image_url: "data:image/png;base64,Zm9v".to_string(),
+                image_url: TINY_PNG_DATA_URL.to_string(),
                 detail: Some(DEFAULT_IMAGE_DETAIL),
             }]
         );
@@ -2010,7 +2031,7 @@ mod tests {
     fn convert_mcp_content_to_items_builds_data_urls_when_missing_prefix() {
         let contents = vec![serde_json::json!({
             "type": "image",
-            "data": "Zm9v",
+            "data": TINY_PNG_BASE64,
             "mimeType": "image/png",
         })];
 
@@ -2018,8 +2039,25 @@ mod tests {
         assert_eq!(
             items,
             vec![FunctionCallOutputContentItem::InputImage {
-                image_url: "data:image/png;base64,Zm9v".to_string(),
+                image_url: TINY_PNG_DATA_URL.to_string(),
                 detail: Some(DEFAULT_IMAGE_DETAIL),
+            }]
+        );
+    }
+
+    #[test]
+    fn convert_mcp_content_to_items_replaces_invalid_images_with_text() {
+        let contents = vec![serde_json::json!({
+            "type": "image",
+            "data": "aGVsbG8=",
+            "mimeType": "image/png",
+        })];
+
+        let items = convert_mcp_content_to_items(&contents).expect("expected image items");
+        assert_eq!(
+            items,
+            vec![FunctionCallOutputContentItem::InputText {
+                text: "Invalid image".to_string(),
             }]
         );
     }
@@ -2208,7 +2246,7 @@ mod tests {
         let call_tool_result = CallToolResult {
             content: vec![
                 serde_json::json!({"type":"text","text":"caption"}),
-                serde_json::json!({"type":"image","data":"BASE64","mimeType":"image/png"}),
+                serde_json::json!({"type":"image","data":TINY_PNG_BASE64,"mimeType":"image/png"}),
             ],
             structured_content: None,
             is_error: Some(false),
@@ -2228,7 +2266,7 @@ mod tests {
                     text: "caption".into(),
                 },
                 FunctionCallOutputContentItem::InputImage {
-                    image_url: "data:image/png;base64,BASE64".into(),
+                    image_url: TINY_PNG_DATA_URL.into(),
                     detail: Some(DEFAULT_IMAGE_DETAIL),
                 },
             ]
@@ -2255,7 +2293,7 @@ mod tests {
             name: None,
             output: FunctionCallOutputPayload::from_content_items(vec![
                 FunctionCallOutputContentItem::InputImage {
-                    image_url: "data:image/png;base64,BASE64".into(),
+                    image_url: TINY_PNG_DATA_URL.into(),
                     detail: Some(DEFAULT_IMAGE_DETAIL),
                 },
             ]),
@@ -2275,7 +2313,7 @@ mod tests {
         let call_tool_result = CallToolResult {
             content: vec![serde_json::json!({
                 "type": "image",
-                "data": "data:image/png;base64,BASE64",
+                "data": TINY_PNG_DATA_URL,
                 "mimeType": "image/png"
             })],
             structured_content: None,
@@ -2291,7 +2329,7 @@ mod tests {
         assert_eq!(
             items,
             vec![FunctionCallOutputContentItem::InputImage {
-                image_url: "data:image/png;base64,BASE64".into(),
+                image_url: TINY_PNG_DATA_URL.into(),
                 detail: Some(DEFAULT_IMAGE_DETAIL),
             }]
         );
@@ -2304,7 +2342,7 @@ mod tests {
         let call_tool_result = CallToolResult {
             content: vec![serde_json::json!({
                 "type": "image",
-                "data": "BASE64",
+                "data": TINY_PNG_BASE64,
                 "mimeType": "image/png",
                 "_meta": {
                     "codex/imageDetail": "original",
@@ -2323,7 +2361,7 @@ mod tests {
         assert_eq!(
             items,
             vec![FunctionCallOutputContentItem::InputImage {
-                image_url: "data:image/png;base64,BASE64".into(),
+                image_url: TINY_PNG_DATA_URL.into(),
                 detail: Some(ImageDetail::Original),
             }]
         );
@@ -2336,7 +2374,7 @@ mod tests {
         let call_tool_result = CallToolResult {
             content: vec![serde_json::json!({
                 "type": "image",
-                "data": "BASE64",
+                "data": TINY_PNG_BASE64,
                 "mimeType": "image/png",
                 "_meta": {
                     "codex/imageDetail": "high",
@@ -2355,7 +2393,7 @@ mod tests {
         assert_eq!(
             items,
             vec![FunctionCallOutputContentItem::InputImage {
-                image_url: "data:image/png;base64,BASE64".into(),
+                image_url: TINY_PNG_DATA_URL.into(),
                 detail: Some(ImageDetail::High),
             }]
         );
@@ -2556,7 +2594,7 @@ mod tests {
 
     #[test]
     fn wraps_image_user_input_with_tags() -> Result<()> {
-        let image_url = "data:image/png;base64,abc".to_string();
+        let image_url = TINY_PNG_DATA_URL.to_string();
 
         let item = ResponseInputItem::from(vec![UserInput::Image {
             image_url: image_url.clone(),
@@ -2586,8 +2624,27 @@ mod tests {
     }
 
     #[test]
+    fn replaces_invalid_image_user_input_with_text() {
+        let item = ResponseInputItem::from(vec![UserInput::Image {
+            image_url: "data:image/png;base64,aGVsbG8=".to_string(),
+            detail: None,
+        }]);
+
+        assert_eq!(
+            item,
+            ResponseInputItem::Message {
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Invalid image".to_string(),
+                }],
+                phase: None,
+            }
+        );
+    }
+
+    #[test]
     fn image_user_input_preserves_requested_detail() -> Result<()> {
-        let image_url = "data:image/png;base64,abc".to_string();
+        let image_url = TINY_PNG_DATA_URL.to_string();
 
         let item = ResponseInputItem::from(vec![UserInput::Image {
             image_url: image_url.clone(),
@@ -2775,7 +2832,7 @@ mod tests {
 
     #[test]
     fn mixed_remote_and_local_images_share_label_sequence() -> Result<()> {
-        let image_url = "data:image/png;base64,abc".to_string();
+        let image_url = TINY_PNG_DATA_URL.to_string();
         let dir = tempdir()?;
         let local_path = dir.path().join("local.png");
         std::fs::write(&local_path, TINY_PNG_BYTES)?;

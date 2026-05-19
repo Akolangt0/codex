@@ -43,6 +43,66 @@ pub enum PromptImageMode {
     Original,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum PromptImageUrlError {
+    #[error("image URL must not be empty")]
+    EmptyUrl,
+    #[error("image data URL must include metadata and a payload")]
+    MissingDataUrlSeparator,
+    #[error("image data URL must use an image MIME type")]
+    NonImageDataUrl,
+    #[error("image data URL must use base64 encoding")]
+    MissingBase64Marker,
+    #[error("image data URL must include base64 payload bytes")]
+    EmptyBase64Payload,
+    #[error("image data URL payload must be valid base64")]
+    InvalidBase64Payload,
+    #[error("image data URL payload must decode to a valid image")]
+    InvalidImageBytes,
+}
+
+pub fn validate_prompt_image_url(image_url: &str) -> Result<(), PromptImageUrlError> {
+    if image_url.trim().is_empty() {
+        return Err(PromptImageUrlError::EmptyUrl);
+    }
+
+    if !image_url
+        .get(.."data:".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
+    {
+        return Ok(());
+    }
+
+    let (metadata, payload) = image_url
+        .split_once(',')
+        .ok_or(PromptImageUrlError::MissingDataUrlSeparator)?;
+    let metadata_without_scheme = &metadata["data:".len()..];
+    let mut metadata_parts = metadata_without_scheme.split(';');
+    let mime_type = metadata_parts.next().unwrap_or_default();
+    if !mime_type
+        .get(.."image/".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("image/"))
+    {
+        return Err(PromptImageUrlError::NonImageDataUrl);
+    }
+    if !metadata_parts.any(|part| part.eq_ignore_ascii_case("base64")) {
+        return Err(PromptImageUrlError::MissingBase64Marker);
+    }
+    if payload.trim().is_empty() {
+        return Err(PromptImageUrlError::EmptyBase64Payload);
+    }
+
+    let bytes = BASE64_STANDARD
+        .decode(payload)
+        .map_err(|_| PromptImageUrlError::InvalidBase64Payload)?;
+    if bytes.is_empty() {
+        return Err(PromptImageUrlError::EmptyBase64Payload);
+    }
+    image::load_from_memory(&bytes).map_err(|_| PromptImageUrlError::InvalidImageBytes)?;
+
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct ImageCacheKey {
     digest: [u8; 20],
@@ -312,6 +372,51 @@ mod tests {
             ImageProcessingError::Decode { .. }
                 | ImageProcessingError::UnsupportedImageFormat { .. }
         ));
+    }
+
+    #[test]
+    fn validate_prompt_image_url_accepts_remote_and_inline_images() {
+        let image = ImageBuffer::from_pixel(1, 1, Rgba([10u8, 20, 30, 255]));
+        let payload = BASE64_STANDARD.encode(image_bytes(&image, ImageFormat::Png));
+        let data_url = format!("data:image/png;base64,{payload}");
+
+        assert_eq!(
+            validate_prompt_image_url("https://example.com/image.png"),
+            Ok(())
+        );
+        assert_eq!(validate_prompt_image_url(&data_url), Ok(()));
+    }
+
+    #[test]
+    fn validate_prompt_image_url_rejects_malformed_inline_images() {
+        assert_eq!(
+            validate_prompt_image_url("   "),
+            Err(PromptImageUrlError::EmptyUrl)
+        );
+        assert_eq!(
+            validate_prompt_image_url("data:image/png;base64"),
+            Err(PromptImageUrlError::MissingDataUrlSeparator)
+        );
+        assert_eq!(
+            validate_prompt_image_url("data:text/plain;base64,aGVsbG8="),
+            Err(PromptImageUrlError::NonImageDataUrl)
+        );
+        assert_eq!(
+            validate_prompt_image_url("data:image/png,aGVsbG8="),
+            Err(PromptImageUrlError::MissingBase64Marker)
+        );
+        assert_eq!(
+            validate_prompt_image_url("data:image/png;base64,"),
+            Err(PromptImageUrlError::EmptyBase64Payload)
+        );
+        assert_eq!(
+            validate_prompt_image_url("data:image/png;base64,%%%"),
+            Err(PromptImageUrlError::InvalidBase64Payload)
+        );
+        assert_eq!(
+            validate_prompt_image_url("data:image/png;base64,aGVsbG8="),
+            Err(PromptImageUrlError::InvalidImageBytes)
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

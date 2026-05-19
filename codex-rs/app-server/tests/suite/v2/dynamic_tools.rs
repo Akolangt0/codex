@@ -33,6 +33,8 @@ use std::path::Path;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::timeout;
+
+const TINY_PNG_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
 use wiremock::MockServer;
 
 // macOS and Windows Bazel CI can spend tens of seconds starting app-server
@@ -565,7 +567,7 @@ async fn dynamic_tool_call_round_trip_sends_content_items_to_model() -> Result<(
             text: "dynamic-ok".to_string(),
         },
         DynamicToolCallOutputContentItem::InputImage {
-            image_url: "data:image/png;base64,AAA".to_string(),
+            image_url: TINY_PNG_DATA_URL.to_string(),
         },
     ];
     let content_items = response_content_items
@@ -610,7 +612,7 @@ async fn dynamic_tool_call_round_trip_sends_content_items_to_model() -> Result<(
                 text: "dynamic-ok".to_string(),
             },
             DynamicToolCallOutputContentItem::InputImage {
-                image_url: "data:image/png;base64,AAA".to_string(),
+                image_url: TINY_PNG_DATA_URL.to_string(),
             },
         ])
     );
@@ -636,7 +638,7 @@ async fn dynamic_tool_call_round_trip_sends_content_items_to_model() -> Result<(
             },
             {
                 "type": "input_image",
-                "image_url": "data:image/png;base64,AAA",
+                "image_url": TINY_PNG_DATA_URL,
                 "detail": "high"
             }
         ])
