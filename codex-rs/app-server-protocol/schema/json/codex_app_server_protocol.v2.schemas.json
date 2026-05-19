@@ -7459,6 +7459,9 @@
         "authStatus": {
           "$ref": "#/definitions/McpAuthStatus"
         },
+          "environmentId": {
+            "type": "string"
+          },
         "name": {
           "type": "string"
         },
@@ -7482,8 +7485,9 @@
         }
       },
       "required": [
-        "authStatus",
-        "name",
+          "authStatus",
+          "environmentId",
+          "name",
         "resourceTemplates",
         "resources",
         "tools"
