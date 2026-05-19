@@ -168,6 +168,8 @@ pub struct ResponsesWebsocketConnection {
     models_etag: Option<String>,
     server_model: Option<String>,
     telemetry: Option<Arc<dyn WebsocketTelemetry>>,
+    auth: SharedAuthProvider,
+    request_url: String,
 }
 
 impl std::fmt::Debug for ResponsesWebsocketConnection {
@@ -184,24 +186,6 @@ impl std::fmt::Debug for ResponsesWebsocketConnection {
 }
 
 impl ResponsesWebsocketConnection {
-    fn new(
-        stream: WsStream,
-        idle_timeout: Duration,
-        server_reasoning_included: bool,
-        models_etag: Option<String>,
-        server_model: Option<String>,
-        telemetry: Option<Arc<dyn WebsocketTelemetry>>,
-    ) -> Self {
-        Self {
-            stream: Arc::new(Mutex::new(Some(stream))),
-            idle_timeout,
-            server_reasoning_included,
-            models_etag,
-            server_model,
-            telemetry,
-        }
-    }
-
     pub async fn is_closed(&self) -> bool {
         self.stream.lock().await.is_none()
     }
@@ -259,6 +243,8 @@ impl ResponsesWebsocketConnection {
         let models_etag = self.models_etag.clone();
         let server_model = self.server_model.clone();
         let telemetry = self.telemetry.clone();
+        let auth = Arc::clone(&self.auth);
+        let request_url = self.request_url.clone();
         let request_body = serde_json::to_value(&request).map_err(|err| {
             ApiError::Stream(format!("failed to encode websocket request: {err}"))
         })?;
@@ -299,11 +285,16 @@ impl ResponsesWebsocketConnection {
                         idle_timeout,
                         telemetry,
                         connection_reused,
+                        WebsocketAuthObserver {
+                            auth: auth.as_ref(),
+                            request_url: &request_url,
+                        },
                     )
                     .await
                 };
 
                 if let Err(err) = result {
+                    observe_websocket_auth_error_headers(auth.as_ref(), &request_url, &err);
                     // A terminal stream error should reach the caller immediately. Waiting for a
                     // graceful close handshake here can stall indefinitely and mask the error.
                     let failed_stream = guard.take();
@@ -377,21 +368,37 @@ impl ResponsesWebsocketClient {
             .provider
             .websocket_url_for_path("responses")
             .map_err(|err| ApiError::Stream(format!("failed to build websocket URL: {err}")))?;
+        let request_url = ws_url.to_string();
 
         let mut headers =
             merge_request_headers(&self.provider.headers, extra_headers, default_headers);
-        self.auth.add_auth_headers(&mut headers);
+        self.auth
+            .add_auth_headers_for_url(&request_url, &mut headers);
 
-        let (stream, _status, server_reasoning_included, models_etag, server_model) =
-            connect_websocket(ws_url, headers, turn_state.clone()).await?;
-        Ok(ResponsesWebsocketConnection::new(
+        let (
             stream,
-            self.provider.stream_idle_timeout,
+            _status,
+            server_reasoning_included,
+            models_etag,
+            server_model,
+            response_headers,
+        ) = connect_websocket(ws_url, headers, turn_state.clone())
+            .await
+            .inspect_err(|error| {
+                observe_websocket_auth_error_headers(self.auth.as_ref(), &request_url, error);
+            })?;
+        self.auth
+            .observe_response_headers(&request_url, &response_headers);
+        Ok(ResponsesWebsocketConnection {
+            stream: Arc::new(Mutex::new(Some(stream))),
+            idle_timeout: self.provider.stream_idle_timeout,
             server_reasoning_included,
             models_etag,
             server_model,
             telemetry,
-        ))
+            auth: Arc::clone(&self.auth),
+            request_url,
+        })
     }
 
     /// Opens a WebSocket connection long enough to validate the upgrade response.
@@ -411,13 +418,21 @@ impl ResponsesWebsocketClient {
             .provider
             .websocket_url_for_path("responses")
             .map_err(|err| ApiError::Stream(format!("failed to build websocket URL: {err}")))?;
+        let request_url = ws_url.to_string();
 
         let mut headers =
             merge_request_headers(&self.provider.headers, extra_headers, default_headers);
-        self.auth.add_auth_headers(&mut headers);
+        self.auth
+            .add_auth_headers_for_url(&request_url, &mut headers);
 
-        let (mut stream, status, reasoning_included, models_etag, server_model) =
-            connect_websocket(ws_url.clone(), headers, /*turn_state*/ None).await?;
+        let (mut stream, status, reasoning_included, models_etag, server_model, response_headers) =
+            connect_websocket(ws_url.clone(), headers, /*turn_state*/ None)
+                .await
+                .inspect_err(|error| {
+                    observe_websocket_auth_error_headers(self.auth.as_ref(), &request_url, error);
+                })?;
+        self.auth
+            .observe_response_headers(&request_url, &response_headers);
         let immediate_close = tokio::time::timeout(immediate_close_timeout, stream.next())
             .await
             .ok()
@@ -437,6 +452,41 @@ impl ResponsesWebsocketClient {
             immediate_close,
         })
     }
+}
+
+fn observe_websocket_auth_error_headers(
+    auth: &dyn crate::auth::AuthProvider,
+    request_url: &str,
+    error: &ApiError,
+) {
+    if let ApiError::Transport(TransportError::Http {
+        headers: Some(headers),
+        ..
+    }) = error
+    {
+        auth.observe_response_headers(request_url, headers);
+    }
+}
+
+struct WebsocketAuthObserver<'a> {
+    auth: &'a dyn crate::auth::AuthProvider,
+    request_url: &'a str,
+}
+
+fn observe_wrapped_retryable_auth_error_headers(
+    auth: &dyn crate::auth::AuthProvider,
+    request_url: &str,
+    error: &ApiError,
+    headers: Option<JsonMap<String, Value>>,
+) {
+    if !matches!(error, ApiError::Retryable { .. }) {
+        return;
+    }
+    let Some(headers) = headers else {
+        return;
+    };
+
+    auth.observe_response_headers(request_url, &json_headers_to_http_headers(headers));
 }
 
 fn immediate_close_from_message(message: Message) -> Option<ResponsesWebsocketClose> {
@@ -472,7 +522,17 @@ async fn connect_websocket(
     url: Url,
     headers: HeaderMap,
     turn_state: Option<Arc<OnceLock<String>>>,
-) -> Result<(WsStream, StatusCode, bool, Option<String>, Option<String>), ApiError> {
+) -> Result<
+    (
+        WsStream,
+        StatusCode,
+        bool,
+        Option<String>,
+        Option<String>,
+        HeaderMap,
+    ),
+    ApiError,
+> {
     ensure_rustls_crypto_provider();
     info!("connecting to websocket: {url}");
 
@@ -499,10 +559,7 @@ async fn connect_websocket(
 
     let (stream, response) = match response {
         Ok((stream, response)) => {
-            info!(
-                "successfully connected to websocket: {url}, headers: {:?}",
-                response.headers()
-            );
+            info!("successfully connected to websocket: {url}");
             (stream, response)
         }
         Err(err) => {
@@ -536,6 +593,7 @@ async fn connect_websocket(
         reasoning_included,
         models_etag,
         server_model,
+        response.headers().clone(),
     ))
 }
 
@@ -666,6 +724,7 @@ async fn run_websocket_response_stream(
     idle_timeout: Duration,
     telemetry: Option<Arc<dyn WebsocketTelemetry>>,
     connection_reused: bool,
+    auth_observer: WebsocketAuthObserver<'_>,
 ) -> Result<(), ApiError> {
     let mut last_server_model: Option<String> = None;
     send_websocket_request(
@@ -703,11 +762,19 @@ async fn run_websocket_response_stream(
         match message {
             Message::Text(text) => {
                 trace!("websocket event: {text}");
-                if let Some(wrapped_error) = parse_wrapped_websocket_error_event(&text)
-                    && let Some(error) =
+                if let Some(wrapped_error) = parse_wrapped_websocket_error_event(&text) {
+                    let headers = wrapped_error.headers.clone();
+                    if let Some(error) =
                         map_wrapped_websocket_error_event(wrapped_error, text.to_string())
-                {
-                    return Err(error);
+                    {
+                        observe_wrapped_retryable_auth_error_headers(
+                            auth_observer.auth,
+                            auth_observer.request_url,
+                            &error,
+                            headers,
+                        );
+                        return Err(error);
+                    }
                 }
 
                 let event = match serde_json::from_str::<ResponsesStreamEvent>(&text) {
@@ -818,6 +885,23 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use serde_json::json;
+    use std::sync::Mutex as StdMutex;
+
+    #[derive(Default)]
+    struct RecordingAuthProvider {
+        observed_headers: StdMutex<Vec<HeaderMap>>,
+    }
+
+    impl crate::auth::AuthProvider for RecordingAuthProvider {
+        fn add_auth_headers(&self, _headers: &mut HeaderMap) {}
+
+        fn observe_response_headers(&self, _request_url: &str, headers: &HeaderMap) {
+            self.observed_headers
+                .lock()
+                .expect("recording auth lock should not be poisoned")
+                .push(headers.clone());
+        }
+    }
 
     #[test]
     fn websocket_config_enables_permessage_deflate() {
@@ -925,19 +1009,43 @@ mod tests {
                 "type": "invalid_request_error",
                 "code": "websocket_connection_limit_reached",
                 "message": "Responses websocket connection limit reached (60 minutes). Create a new websocket connection to continue."
+            },
+            "headers": {
+                "x-oai-is-update": "ois1.rotated.nonce.ciphertext"
             }
         })
         .to_string();
 
         let wrapped_error = parse_wrapped_websocket_error_event(&payload)
             .expect("expected websocket error payload to be parsed");
+        let wrapped_headers = wrapped_error.headers.clone();
         let api_error = map_wrapped_websocket_error_event(wrapped_error, payload)
             .expect("expected websocket error payload to map to ApiError");
-        let ApiError::Retryable { message, delay } = api_error else {
+        let ApiError::Retryable { message, delay } = &api_error else {
             panic!("expected ApiError::Retryable");
         };
         assert_eq!(message, WEBSOCKET_CONNECTION_LIMIT_REACHED_MESSAGE);
-        assert_eq!(delay, None);
+        assert_eq!(*delay, None);
+
+        let auth = RecordingAuthProvider::default();
+        observe_wrapped_retryable_auth_error_headers(
+            &auth,
+            "wss://chatgpt.com/backend-api/codex/responses",
+            &api_error,
+            wrapped_headers,
+        );
+
+        let observed_headers = auth
+            .observed_headers
+            .lock()
+            .expect("recording auth lock should not be poisoned");
+        assert_eq!(observed_headers.len(), 1);
+        assert_eq!(
+            observed_headers[0]
+                .get("x-oai-is-update")
+                .and_then(|value| value.to_str().ok()),
+            Some("ois1.rotated.nonce.ciphertext")
+        );
     }
 
     #[test]

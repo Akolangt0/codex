@@ -1,6 +1,8 @@
 use std::time::Duration;
 
 use codex_api::SharedAuthProvider;
+use codex_client::build_reqwest_client_with_custom_ca;
+use codex_client::with_chatgpt_redirect_protection;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use tokio::time::sleep;
@@ -35,10 +37,18 @@ impl std::fmt::Debug for ExecutorRegistryClient {
 impl ExecutorRegistryClient {
     fn new(base_url: String, auth_provider: SharedAuthProvider) -> Result<Self, ExecServerError> {
         let base_url = normalize_base_url(base_url)?;
+        let http = build_reqwest_client_with_custom_ca(with_chatgpt_redirect_protection(
+            reqwest::Client::builder(),
+        ))
+        .map_err(|error| {
+            ExecServerError::ExecutorRegistryConfig(format!(
+                "failed to build registry HTTP client: {error}"
+            ))
+        })?;
         Ok(Self {
             base_url,
             auth_provider,
-            http: reqwest::Client::new(),
+            http,
         })
     }
 
@@ -46,15 +56,18 @@ impl ExecutorRegistryClient {
         &self,
         executor_id: &str,
     ) -> Result<ExecutorRegistryExecutorRegistrationResponse, ExecServerError> {
+        let url = endpoint_url(
+            &self.base_url,
+            &format!("/cloud/executor/{executor_id}/register"),
+        );
         let response = self
             .http
-            .post(endpoint_url(
-                &self.base_url,
-                &format!("/cloud/executor/{executor_id}/register"),
-            ))
-            .headers(self.auth_provider.to_auth_headers())
+            .post(&url)
+            .headers(self.auth_provider.to_auth_headers_for_url(&url))
             .send()
             .await?;
+        self.auth_provider
+            .observe_response_headers(&url, response.headers());
         self.parse_json_response(response).await
     }
 
@@ -242,6 +255,8 @@ fn preview_error_body(body: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering;
 
     use codex_api::AuthProvider;
     use http::HeaderMap;
@@ -257,7 +272,9 @@ mod tests {
     use super::*;
 
     #[derive(Debug)]
-    struct StaticRegistryAuthProvider;
+    struct StaticRegistryAuthProvider {
+        observed_registry_rotation: Arc<AtomicBool>,
+    }
 
     impl AuthProvider for StaticRegistryAuthProvider {
         fn add_auth_headers(&self, headers: &mut HeaderMap) {
@@ -270,33 +287,67 @@ mod tests {
                 HeaderValue::from_static("workspace-123"),
             );
         }
+
+        fn add_auth_headers_for_url(&self, request_url: &str, headers: &mut HeaderMap) {
+            self.add_auth_headers(headers);
+            assert!(request_url.ends_with("/cloud/executor/exec-requested/register"));
+            let _ = headers.insert(
+                "X-Registry-URL-Scoped-Auth",
+                HeaderValue::from_static("true"),
+            );
+        }
+
+        fn observe_response_headers(&self, request_url: &str, headers: &HeaderMap) {
+            assert!(request_url.ends_with("/cloud/executor/exec-requested/register"));
+            if headers.contains_key("X-Registry-Rotation") {
+                self.observed_registry_rotation
+                    .store(true, Ordering::Relaxed);
+            }
+        }
     }
 
     fn static_registry_auth_provider() -> SharedAuthProvider {
-        Arc::new(StaticRegistryAuthProvider)
+        Arc::new(StaticRegistryAuthProvider {
+            observed_registry_rotation: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    fn tracking_registry_auth_provider() -> (SharedAuthProvider, Arc<AtomicBool>) {
+        let observed_registry_rotation = Arc::new(AtomicBool::new(false));
+        (
+            Arc::new(StaticRegistryAuthProvider {
+                observed_registry_rotation: Arc::clone(&observed_registry_rotation),
+            }),
+            observed_registry_rotation,
+        )
     }
 
     #[tokio::test]
     async fn register_executor_posts_with_auth_provider_headers() {
         let server = MockServer::start().await;
+        let (auth_provider, observed_registry_rotation) = tracking_registry_auth_provider();
         let config = RemoteExecutorConfig::new(
             server.uri(),
             "exec-requested".to_string(),
-            static_registry_auth_provider(),
+            Arc::clone(&auth_provider),
         )
         .expect("config");
         Mock::given(method("POST"))
             .and(path("/cloud/executor/exec-requested/register"))
             .and(header("authorization", "Bearer registry-token"))
             .and(header("chatgpt-account-id", "workspace-123"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "executor_id": "exec-1",
-                "url": "wss://rendezvous.test/executor/exec-1?role=executor&sig=abc"
-            })))
+            .and(header("x-registry-url-scoped-auth", "true"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("X-Registry-Rotation", "rotated")
+                    .set_body_json(serde_json::json!({
+                        "executor_id": "exec-1",
+                        "url": "wss://rendezvous.test/executor/exec-1?role=executor&sig=abc"
+                    })),
+            )
             .mount(&server)
             .await;
-        let client = ExecutorRegistryClient::new(server.uri(), static_registry_auth_provider())
-            .expect("client");
+        let client = ExecutorRegistryClient::new(server.uri(), auth_provider).expect("client");
 
         let response = client
             .register_executor(&config.executor_id)
@@ -310,6 +361,7 @@ mod tests {
                 url: "wss://rendezvous.test/executor/exec-1?role=executor&sig=abc".to_string(),
             }
         );
+        assert!(observed_registry_rotation.load(Ordering::Relaxed));
     }
 
     #[test]

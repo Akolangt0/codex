@@ -15,6 +15,8 @@ use codex_api::ResponseEvent;
 use codex_app_server_protocol::AuthMode;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
+use codex_login::integrity_state::INTEGRITY_STATE_HEADER_NAME;
+use codex_login::integrity_state::INTEGRITY_STATE_UPDATE_HEADER_NAME;
 use codex_model_provider::BearerAuthProvider;
 use codex_model_provider_info::CHATGPT_CODEX_BASE_URL;
 use codex_model_provider_info::ModelProviderInfo;
@@ -476,6 +478,78 @@ fn auth_request_telemetry_context_tracks_attached_auth_and_retry_phase() {
     assert!(auth_context.retry_after_unauthorized);
     assert_eq!(auth_context.recovery_mode, Some("managed"));
     assert_eq!(auth_context.recovery_phase, Some("refresh_token"));
+}
+
+#[tokio::test]
+async fn client_setup_rotates_chatgpt_integrity_state_for_agent_requests() {
+    const INITIAL_STATE: &str = "ois1.initial.nonce.ciphertext";
+    const ROTATED_STATE: &str = "ois1.rotated.nonce.ciphertext";
+
+    let auth = CodexAuth::create_dummy_chatgpt_auth_tokens_for_testing();
+    assert!(
+        auth.update_integrity_state(INITIAL_STATE)
+            .expect("initial integrity state should persist")
+    );
+
+    let thread_id = ThreadId::new();
+    let model_client = ModelClient::new(
+        Some(AuthManager::from_auth_for_testing(auth.clone())),
+        SessionId::new(),
+        thread_id,
+        /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
+        ModelProviderInfo::create_openai_provider(Some(CHATGPT_CODEX_BASE_URL.to_string())),
+        SessionSource::Exec,
+        /*model_verbosity*/ None,
+        /*enable_request_compression*/ false,
+        /*include_timing_metrics*/ false,
+        /*beta_features_header*/ None,
+        /*attestation_provider*/ None,
+    );
+    let responses_url = format!("{CHATGPT_CODEX_BASE_URL}/responses");
+
+    let initial_setup = model_client
+        .current_client_setup()
+        .await
+        .expect("client setup should resolve");
+    let initial_headers = initial_setup
+        .api_auth
+        .to_auth_headers_for_url(&responses_url);
+    assert_eq!(
+        initial_headers
+            .get(INTEGRITY_STATE_HEADER_NAME)
+            .and_then(|value| value.to_str().ok()),
+        Some(INITIAL_STATE)
+    );
+
+    let mut response_headers = http::HeaderMap::new();
+    response_headers.insert(
+        INTEGRITY_STATE_UPDATE_HEADER_NAME,
+        http::HeaderValue::from_static(ROTATED_STATE),
+    );
+    initial_setup
+        .api_auth
+        .observe_response_headers(&responses_url, &response_headers);
+    assert_eq!(auth.integrity_state().as_deref(), Some(ROTATED_STATE));
+
+    let rotated_setup = model_client
+        .current_client_setup()
+        .await
+        .expect("client setup should refresh auth state");
+    let rotated_headers = rotated_setup
+        .api_auth
+        .to_auth_headers_for_url(&responses_url);
+    assert_eq!(
+        rotated_headers
+            .get(INTEGRITY_STATE_HEADER_NAME)
+            .and_then(|value| value.to_str().ok()),
+        Some(ROTATED_STATE)
+    );
+    assert!(
+        !rotated_setup
+            .api_auth
+            .to_auth_headers_for_url("https://example.com/v1/responses")
+            .contains_key(INTEGRITY_STATE_HEADER_NAME)
+    );
 }
 
 fn model_client_with_counting_attestation(
