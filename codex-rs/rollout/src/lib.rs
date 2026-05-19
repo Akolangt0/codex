@@ -9,6 +9,7 @@ pub(crate) mod list;
 pub(crate) mod metadata;
 pub(crate) mod policy;
 pub(crate) mod recorder;
+pub(crate) mod search;
 pub(crate) mod session_index;
 pub mod state_db;
 
@@ -38,6 +39,7 @@ pub use list::SortDirection;
 pub use list::ThreadItem;
 pub use list::ThreadListConfig;
 pub use list::ThreadListLayout;
+pub use list::ThreadSearchPreview;
 pub use list::ThreadSortKey;
 pub use list::ThreadsPage;
 pub use list::find_archived_thread_path_by_id_str;

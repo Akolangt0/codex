@@ -338,6 +338,7 @@ fn stored_thread_from_state(
         sandbox_policy: SandboxPolicy::new_read_only_policy(),
         token_usage: None,
         first_user_message: None,
+        search_preview: None,
         history,
     })
 }

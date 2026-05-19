@@ -2164,6 +2164,7 @@ mod tests {
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             token_usage: None,
             first_user_message: Some("before rollback".to_string()),
+            search_preview: None,
             history: Some(StoredThreadHistory {
                 thread_id,
                 items: history_items,
