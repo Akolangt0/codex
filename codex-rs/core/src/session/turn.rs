@@ -114,6 +114,8 @@ use tracing::trace;
 use tracing::trace_span;
 use tracing::warn;
 
+const MAX_AUTO_COMPACTIONS_PER_TURN: usize = 3;
+
 /// Takes a user message as input and runs a loop where, at each sampling request, the model
 /// replies with either:
 ///
@@ -138,27 +140,34 @@ pub(crate) async fn run_turn(
 ) -> Option<String> {
     let mut client_session =
         prewarmed_client_session.unwrap_or_else(|| sess.services.model_client.new_session());
+    let mut auto_compact_limiter = AutoCompactTurnLimiter::default();
     // TODO(ccunningham): Pre-turn compaction runs before context updates and the
     // new user message are recorded. Estimate pending incoming items (context
     // diffs/full reinjection + user input) and trigger compaction preemptively
     // when they would push the thread over the compaction threshold.
-    let pre_sampling_compact =
-        match run_pre_sampling_compact(&sess, &turn_context, &mut client_session).await {
-            Ok(pre_sampling_compact) => pre_sampling_compact,
-            Err(err) => {
-                if err.to_codex_protocol_error() == CodexErrorInfo::UsageLimitExceeded
-                    && let Err(err) = sess
-                        .goal_runtime_apply(GoalRuntimeEvent::UsageLimitReached {
-                            turn_context: turn_context.as_ref(),
-                        })
-                        .await
-                {
-                    warn!("failed to usage-limit active goal after usage-limit error: {err}");
-                }
-                error!("Failed to run pre-sampling compact");
-                return None;
+    let pre_sampling_compact = match run_pre_sampling_compact(
+        &sess,
+        &turn_context,
+        &mut client_session,
+        &mut auto_compact_limiter,
+    )
+    .await
+    {
+        Ok(pre_sampling_compact) => pre_sampling_compact,
+        Err(err) => {
+            if err.to_codex_protocol_error() == CodexErrorInfo::UsageLimitExceeded
+                && let Err(err) = sess
+                    .goal_runtime_apply(GoalRuntimeEvent::UsageLimitReached {
+                        turn_context: turn_context.as_ref(),
+                    })
+                    .await
+            {
+                warn!("failed to usage-limit active goal after usage-limit error: {err}");
             }
-        };
+            error!("Failed to run pre-sampling compact");
+            return None;
+        }
+    };
     if pre_sampling_compact.reset_client_session {
         client_session.reset_websocket_session();
     }
@@ -264,6 +273,7 @@ pub(crate) async fn run_turn(
                     hook_outcome.additional_contexts,
                 )
                 .await;
+                auto_compact_limiter.reset_after_user_input();
             }
         }
         if blocked_pending_input && !accepted_pending_input {
@@ -329,6 +339,7 @@ pub(crate) async fn run_turn(
                         &sess,
                         &turn_context,
                         &mut client_session,
+                        &mut auto_compact_limiter,
                         InitialContextInjection::BeforeLastUserMessage,
                         CompactionReason::ContextLimit,
                         CompactionPhase::MidTurn,
@@ -652,6 +663,56 @@ struct AutoCompactTokenStatus {
     token_limit_reached: bool,
 }
 
+#[derive(Default)]
+struct AutoCompactTurnLimiter {
+    attempts: usize,
+}
+
+impl AutoCompactTurnLimiter {
+    fn reset_after_user_input(&mut self) {
+        self.attempts = 0;
+    }
+
+    async fn acquire(
+        &mut self,
+        sess: &Session,
+        turn_context: &TurnContext,
+        reason: CompactionReason,
+        phase: CompactionPhase,
+    ) -> CodexResult<()> {
+        if self.attempts >= MAX_AUTO_COMPACTIONS_PER_TURN {
+            let token_status = auto_compact_token_status(sess, turn_context).await;
+            warn!(
+                turn_id = %turn_context.sub_id,
+                auto_compactions_attempted = self.attempts,
+                auto_compaction_limit = MAX_AUTO_COMPACTIONS_PER_TURN,
+                reason = ?reason,
+                phase = ?phase,
+                active_context_tokens = token_status.active_context_tokens,
+                auto_compact_scope_tokens = token_status.auto_compact_scope_tokens,
+                auto_compact_scope_limit = token_status.auto_compact_scope_limit,
+                full_context_window_limit = ?token_status.full_context_window_limit,
+                full_context_window_limit_reached = token_status.full_context_window_limit_reached,
+                "automatic compaction limit reached; stopping turn"
+            );
+            sess.send_event(
+                turn_context,
+                EventMsg::Error(ErrorEvent {
+                    message: format!(
+                        "Codex stopped after {MAX_AUTO_COMPACTIONS_PER_TURN} automatic compactions in this turn because the context remained too large. Start a new thread or reduce earlier history before retrying."
+                    ),
+                    codex_error_info: Some(CodexErrorInfo::ContextWindowExceeded),
+                }),
+            )
+            .await;
+            return Err(CodexErr::ContextWindowExceeded);
+        }
+
+        self.attempts += 1;
+        Ok(())
+    }
+}
+
 async fn auto_compact_token_status(
     sess: &Session,
     turn_context: &TurnContext,
@@ -708,9 +769,15 @@ async fn run_pre_sampling_compact(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     client_session: &mut ModelClientSession,
+    auto_compact_limiter: &mut AutoCompactTurnLimiter,
 ) -> CodexResult<PreSamplingCompactResult> {
-    let mut pre_sampling_compacted =
-        maybe_run_previous_model_inline_compact(sess, turn_context, client_session).await?;
+    let mut pre_sampling_compacted = maybe_run_previous_model_inline_compact(
+        sess,
+        turn_context,
+        client_session,
+        auto_compact_limiter,
+    )
+    .await?;
     let mut reset_client_session = pre_sampling_compacted;
     let token_status = auto_compact_token_status(sess.as_ref(), turn_context.as_ref()).await;
     // Compact if the configured auto-compaction budget or usable context window is exhausted.
@@ -719,6 +786,7 @@ async fn run_pre_sampling_compact(
             sess,
             turn_context,
             client_session,
+            auto_compact_limiter,
             InitialContextInjection::DoNotInject,
             CompactionReason::ContextLimit,
             CompactionPhase::PreTurn,
@@ -741,6 +809,7 @@ async fn maybe_run_previous_model_inline_compact(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     client_session: &mut ModelClientSession,
+    auto_compact_limiter: &mut AutoCompactTurnLimiter,
 ) -> CodexResult<bool> {
     let Some(previous_turn_settings) = sess.previous_turn_settings().await else {
         return Ok(false);
@@ -780,6 +849,7 @@ async fn maybe_run_previous_model_inline_compact(
             sess,
             &previous_model_turn_context,
             client_session,
+            auto_compact_limiter,
             InitialContextInjection::DoNotInject,
             CompactionReason::ModelDownshift,
             CompactionPhase::PreTurn,
@@ -794,10 +864,15 @@ async fn run_auto_compact(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     client_session: &mut ModelClientSession,
+    auto_compact_limiter: &mut AutoCompactTurnLimiter,
     initial_context_injection: InitialContextInjection,
     reason: CompactionReason,
     phase: CompactionPhase,
 ) -> CodexResult<bool> {
+    auto_compact_limiter
+        .acquire(sess.as_ref(), turn_context.as_ref(), reason, phase)
+        .await?;
+
     if should_use_remote_compact_task(turn_context.provider.info()) {
         if turn_context.features.enabled(Feature::RemoteCompactionV2) {
             run_inline_remote_auto_compact_task_v2(
