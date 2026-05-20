@@ -65,6 +65,7 @@ impl ChatWidget {
             }
         }
         if feature == Feature::FastMode {
+            self.refresh_effective_service_tier();
             self.sync_service_tier_commands();
         }
         if feature == Feature::Personality {
@@ -237,6 +238,7 @@ impl ChatWidget {
         {
             mask.model = Some(model.to_string());
         }
+        self.refresh_effective_service_tier();
         self.refresh_model_dependent_surfaces();
     }
 
