@@ -239,7 +239,7 @@ impl ChatWidget {
                     );
                 }
             }
-            SlashCommand::Side => {
+            SlashCommand::Side | SlashCommand::Btw => {
                 self.request_empty_side_conversation();
             }
             SlashCommand::Agent | SlashCommand::MultiAgents => {
@@ -745,7 +745,7 @@ impl ChatWidget {
                     self.bottom_pane.drain_pending_submission_state();
                 }
             }
-            SlashCommand::Side if !trimmed.is_empty() => {
+            SlashCommand::Side | SlashCommand::Btw if !trimmed.is_empty() => {
                 let Some(parent_thread_id) = self.thread_id else {
                     self.add_error_message(
                         "'/side' is unavailable before the session starts.".to_string(),
@@ -957,6 +957,7 @@ impl ChatWidget {
             | SlashCommand::Plan
             | SlashCommand::Goal
             | SlashCommand::Side
+            | SlashCommand::Btw
             | SlashCommand::Keymap
             | SlashCommand::Agent
             | SlashCommand::MultiAgents
@@ -1017,7 +1018,7 @@ impl ChatWidget {
     }
 
     fn ensure_side_command_allowed_outside_review(&mut self, cmd: SlashCommand) -> bool {
-        if cmd != SlashCommand::Side || !self.review.is_review_mode {
+        if !matches!(cmd, SlashCommand::Side | SlashCommand::Btw) || !self.review.is_review_mode {
             return true;
         }
 
