@@ -247,6 +247,7 @@ fn permissions_profiles_resolve_extends_parent_first_with_child_overrides() {
             (
                 "base".to_string(),
                 PermissionProfileToml {
+                    description: None,
                     extends: None,
                     workspace_roots: None,
                     filesystem: Some(FilesystemPermissionsToml {
@@ -263,7 +264,7 @@ fn permissions_profiles_resolve_extends_parent_first_with_child_overrides() {
                             (
                                 ":project_roots".to_string(),
                                 FilesystemPermissionToml::Scoped(BTreeMap::from([
-                                    ("**/*.env".to_string(), FileSystemAccessMode::None),
+                                    ("**/*.env".to_string(), FileSystemAccessMode::Deny),
                                     ("docs".to_string(), FileSystemAccessMode::Read),
                                 ])),
                             ),
@@ -296,6 +297,7 @@ fn permissions_profiles_resolve_extends_parent_first_with_child_overrides() {
             (
                 "child".to_string(),
                 PermissionProfileToml {
+                    description: None,
                     extends: Some("base".to_string()),
                     workspace_roots: None,
                     filesystem: Some(FilesystemPermissionsToml {
@@ -349,6 +351,7 @@ fn permissions_profiles_resolve_extends_parent_first_with_child_overrides() {
     assert_eq!(
         resolved.profile,
         PermissionProfileToml {
+            description: None,
             extends: Some("base".to_string()),
             workspace_roots: None,
             filesystem: Some(FilesystemPermissionsToml {
@@ -365,7 +368,7 @@ fn permissions_profiles_resolve_extends_parent_first_with_child_overrides() {
                     (
                         ":project_roots".to_string(),
                         FilesystemPermissionToml::Scoped(BTreeMap::from([
-                            ("**/*.env".to_string(), FileSystemAccessMode::None),
+                            ("**/*.env".to_string(), FileSystemAccessMode::Deny),
                             ("docs".to_string(), FileSystemAccessMode::Write),
                             ("src".to_string(), FileSystemAccessMode::Read),
                         ])),

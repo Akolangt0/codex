@@ -357,6 +357,78 @@ fn config_from_layers_resolves_inherited_profiles_across_layers() {
 }
 
 #[test]
+fn config_from_layers_uses_only_the_final_selected_profile_network() {
+    let lower_layer = ConfigLayerEntry::new(
+        ConfigLayerSource::SessionFlags,
+        toml::toml! {
+            default_permissions = "workspace"
+
+            [permissions.workspace.network.domains]
+            "lower.example.com" = "allow"
+        }
+        .into(),
+    );
+    let higher_layer = ConfigLayerEntry::new(
+        ConfigLayerSource::SessionFlags,
+        toml::toml! {
+            default_permissions = ":workspace"
+        }
+        .into(),
+    );
+    let layers = ConfigLayerStack::new(
+        vec![lower_layer, higher_layer],
+        ConfigRequirements::default(),
+        ConfigRequirementsToml::default(),
+    )
+    .expect("layer stack should be valid");
+
+    let config = config_from_layers(&layers, &Policy::empty())
+        .expect("final built-in profile selection should load");
+
+    assert_eq!(config.network.allowed_domains(), None);
+    assert_eq!(config.network.denied_domains(), None);
+}
+
+#[test]
+fn trusted_constraints_use_only_the_final_selected_profile_network() {
+    let lower_layer = ConfigLayerEntry::new(
+        ConfigLayerSource::System {
+            file: AbsolutePathBuf::try_from(std::path::PathBuf::from("/tmp/system.toml"))
+                .expect("system config path should be absolute"),
+        },
+        toml::toml! {
+            default_permissions = "workspace"
+
+            [permissions.workspace.network.domains]
+            "managed.example.com" = "allow"
+        }
+        .into(),
+    );
+    let higher_layer = ConfigLayerEntry::new(
+        ConfigLayerSource::LegacyManagedConfigTomlFromFile {
+            file: AbsolutePathBuf::try_from(std::path::PathBuf::from("/tmp/managed.toml"))
+                .expect("managed config path should be absolute"),
+        },
+        toml::toml! {
+            default_permissions = ":workspace"
+        }
+        .into(),
+    );
+    let layers = ConfigLayerStack::new(
+        vec![lower_layer, higher_layer],
+        ConfigRequirements::default(),
+        ConfigRequirementsToml::default(),
+    )
+    .expect("layer stack should be valid");
+
+    let constraints = network_constraints_from_trusted_layers(&layers)
+        .expect("final built-in trusted selection should load");
+
+    assert_eq!(constraints.allowed_domains, None);
+    assert_eq!(constraints.denied_domains, None);
+}
+
+#[test]
 fn apply_network_constraints_skips_empty_domain_sides() {
     let config: toml::Value = toml::from_str(
         r#"

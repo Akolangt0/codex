@@ -130,10 +130,11 @@ fn network_constraints_from_trusted_layers(
         }
 
         merge_toml_values(&mut merged, &layer.config);
-        let parsed = network_tables_from_toml(&merged)?;
-        if let Some(network) = selected_network_from_tables(parsed)? {
-            apply_network_constraints(network, &mut constraints);
-        }
+    }
+
+    let parsed = network_tables_from_toml(&merged)?;
+    if let Some(network) = selected_network_from_tables(parsed)? {
+        apply_network_constraints(network, &mut constraints);
     }
     Ok(constraints)
 }
@@ -225,9 +226,9 @@ fn config_from_layers(
         /*include_disabled*/ false,
     ) {
         merge_toml_values(&mut merged, &layer.config);
-        let parsed = network_tables_from_toml(&merged)?;
-        apply_network_tables(&mut config, parsed)?;
     }
+    let parsed = network_tables_from_toml(&merged)?;
+    apply_network_tables(&mut config, parsed)?;
     apply_exec_policy_network_rules(&mut config, exec_policy);
     Ok(config)
 }

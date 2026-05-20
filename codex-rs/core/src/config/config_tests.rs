@@ -833,8 +833,8 @@ async fn permissions_profiles_proxy_policy_does_not_start_managed_network_proxy_
             default_permissions: Some("workspace".to_string()),
             permissions: Some(PermissionsToml {
                 entries: BTreeMap::from([(
-                "workspace".to_string(),
-                PermissionProfileToml {
+                    "workspace".to_string(),
+                    PermissionProfileToml {
                         description: None,
                         extends: None,
                         workspace_roots: None,
@@ -1348,8 +1348,8 @@ async fn permissions_profiles_network_disabled_by_default_does_not_start_proxy()
             default_permissions: Some("workspace".to_string()),
             permissions: Some(PermissionsToml {
                 entries: BTreeMap::from([(
-                "workspace".to_string(),
-                PermissionProfileToml {
+                    "workspace".to_string(),
+                    PermissionProfileToml {
                         description: None,
                         extends: None,
                         workspace_roots: None,
@@ -1510,6 +1510,7 @@ async fn default_permissions_extended_profile_preserves_parent_metadata() -> std
                     (
                         "base".to_string(),
                         PermissionProfileToml {
+                            description: None,
                             extends: None,
                             workspace_roots: None,
                             filesystem: Some(FilesystemPermissionsToml {
@@ -1525,6 +1526,7 @@ async fn default_permissions_extended_profile_preserves_parent_metadata() -> std
                     (
                         "workspace".to_string(),
                         PermissionProfileToml {
+                            description: None,
                             extends: Some("base".to_string()),
                             workspace_roots: None,
                             filesystem: None,
@@ -2168,6 +2170,7 @@ async fn default_permissions_profile_can_extend_builtin_workspace() -> std::io::
                 entries: BTreeMap::from([(
                     "workspace-with-network".to_string(),
                     PermissionProfileToml {
+                        description: None,
                         extends: Some(":workspace".to_string()),
                         workspace_roots: None,
                         filesystem: None,
